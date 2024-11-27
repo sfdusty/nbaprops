@@ -2,83 +2,97 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 
-# Database file path
 DB_PATH = "nba_props.db"
 
-# Function to fetch table names (markets)
+st.markdown(
+    """
+    <style>
+    .block-container { padding: 1rem; max-width: 100%; width: 100%; }
+    .stDataFrame > div { max-height: 80vh; overflow: auto; }
+    .css-1d391kg { overflow-x: hidden; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 def get_available_markets():
     conn = sqlite3.connect(DB_PATH)
-    query = "SELECT name FROM sqlite_master WHERE type='table';"
-    tables = pd.read_sql_query(query, conn)["name"].tolist()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+    tables = [row[0] for row in cursor.fetchall()]
+    market_types = {}
+    for table in tables:
+        try:
+            query = f"SELECT DISTINCT Market FROM '{table}'"
+            market_data = pd.read_sql_query(query, conn)
+            for market_type in market_data["Market"].unique():
+                market_types[market_type] = table
+        except Exception as e:
+            st.write(f"Skipping table {table}: {e}")
     conn.close()
-    return tables
+    return market_types
 
-# Function to fetch and format prop data
-def get_props_data(selected_market):
-    # Connect to the database
+def get_props_data(selected_market, selected_table):
     conn = sqlite3.connect(DB_PATH)
-
-    # Query the data from the selected market table
-    query = f"SELECT Player, Position, Team, Opponent, Selection, PropLine, Odds, Bookie FROM {selected_market}"
-    data = pd.read_sql_query(query, conn)
+    query = f"SELECT Player, Position, Team, Opponent, Selection, PropLine, Odds, Bookie FROM '{selected_table}' WHERE Market = ?"
+    data = pd.read_sql_query(query, conn, params=(selected_market,))
     conn.close()
+    return format_props_data(data)
 
-    # Process data to get the desired output format
-    grouped_data = format_props_data(data)
-    return grouped_data
-
-# Function to format data for display
 def format_props_data(data):
-    # Pivot the data to show lines and odds for each bookie
     pivot_data = data.pivot_table(
         index=["Player", "Position", "Team", "Opponent", "Selection"],
         columns="Bookie",
         values=["PropLine", "Odds"],
         aggfunc="first"
     )
-    
-    # Flatten the multi-index columns for cleaner display
     pivot_data.columns = [f"{bookie} {col}" for col, bookie in pivot_data.columns]
     pivot_data.reset_index(inplace=True)
 
-    # Split into "Over" and "Under" rows and interleave
     over_data = pivot_data[pivot_data["Selection"] == "Over"].drop(columns=["Selection"])
     under_data = pivot_data[pivot_data["Selection"] == "Under"].drop(columns=["Selection"])
     over_data["Type"] = "Over"
     under_data["Type"] = "Under"
+    formatted_data = pd.concat([over_data, under_data]).sort_values(by=["Player", "Team", "Opponent", "Type"])
 
-    # Combine Over and Under rows for each player
-    formatted_data = pd.concat([over_data, under_data]).sort_values(
-        by=["Player", "Team", "Opponent", "Type"]
-    )
-
-    # Dynamically rearrange columns to ensure each bookie's line and odds are grouped
     base_columns = ["Player", "Position", "Team", "Opponent", "Type"]
-    
-    # Desired bookie order
     desired_bookie_order = ["DraftKings", "FanDuel", "ESPNBet", "BetMGM", "Caesars"]
+    bookie_name_map = {"DraftKings": "DK", "FanDuel": "FD", "ESPNBet": "EB", "BetMGM": "MGM", "Caesars": "CZ"}
 
-    # Create ordered columns for bookie lines and odds
-    reordered_bookie_columns = []
-    for bookie in desired_bookie_order:
-        reordered_bookie_columns.extend([f"{bookie} PropLine", f"{bookie} Odds"])
+    # Select columns dynamically based on their original names
+    reordered_bookie_columns = [
+        col for bookie in desired_bookie_order for col in [f"{bookie} PropLine", f"{bookie} Odds"] if col in formatted_data.columns
+    ]
+    final_columns = base_columns + reordered_bookie_columns
+    formatted_data = formatted_data[final_columns]
 
-    # Combine base columns with reordered bookie columns
-    reordered_columns = base_columns + reordered_bookie_columns
-    return formatted_data[reordered_columns]
+    # Rename columns for display
+    column_rename_map = {
+        "Player": "Player Name",
+        "Position": "Pos",
+        "Team": "Team",
+        "Opponent": "Opp",
+        "Type": "Bet Type",
+    }
+    for bookie, short_name in bookie_name_map.items():
+        column_rename_map[f"{bookie} PropLine"] = f"{short_name} Line"
+        column_rename_map[f"{bookie} Odds"] = f"{short_name} Odds"
 
-# Streamlit app
+    return formatted_data.rename(columns=column_rename_map)
+
 st.title("NBA Prop Markets Viewer")
-
-# Sidebar for selecting prop market
 st.sidebar.header("Filters")
 available_markets = get_available_markets()
-selected_market = st.sidebar.selectbox("Select Prop Market", options=available_markets)
 
-# Display selected market data
-if selected_market:
-    st.subheader(f"Player Prop Market Odds - {selected_market}")
-    props_data = get_props_data(selected_market)
-    st.dataframe(props_data, use_container_width=True)
+if not available_markets:
+    st.warning("No available markets found.")
 else:
-    st.warning("Please select a prop market from the sidebar.")
+    market_names = list(available_markets.keys())
+    selected_market_name = st.sidebar.selectbox("Select Prop Market", options=market_names)
+    selected_table = available_markets[selected_market_name]
+    if selected_market_name:
+        st.subheader(f"Player Prop Market Odds - {selected_market_name}")
+        props_data = get_props_data(selected_market_name, selected_table)
+        st.dataframe(props_data, use_container_width=True, height=680)
+    else:
+        st.warning("Please select a prop market from the sidebar.")
