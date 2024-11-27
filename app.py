@@ -32,11 +32,23 @@ def get_available_markets():
     conn.close()
     return market_types
 
-def get_props_data(selected_market, selected_table):
+def get_last_update_time(table_name):
     conn = sqlite3.connect(DB_PATH)
-    query = f"SELECT Player, Position, Team, Opponent, Selection, PropLine, Odds, Bookie FROM '{selected_table}' WHERE Market = ?"
+    query = f"SELECT MAX(ScriptTimestamp) as LastUpdate FROM '{table_name}'"
+    result = pd.read_sql_query(query, conn)
+    conn.close()
+    return result["LastUpdate"].iloc[0] if not result.empty else None
+
+def get_team_filter_options(data):
+    return sorted(data["Team"].unique())
+
+def get_props_data(selected_market, selected_table, selected_team=None):
+    conn = sqlite3.connect(DB_PATH)
+    query = f"SELECT Player, Position, Team, Opponent, Selection, PropLine, Odds, Bookie, ScriptTimestamp FROM '{selected_table}' WHERE Market = ?"
     data = pd.read_sql_query(query, conn, params=(selected_market,))
     conn.close()
+    if selected_team:
+        data = data[data["Team"] == selected_team]
     return format_props_data(data)
 
 def format_props_data(data):
@@ -59,14 +71,12 @@ def format_props_data(data):
     desired_bookie_order = ["DraftKings", "FanDuel", "ESPNBet", "BetMGM", "Caesars"]
     bookie_name_map = {"DraftKings": "DK", "FanDuel": "FD", "ESPNBet": "EB", "BetMGM": "MGM", "Caesars": "CZ"}
 
-    # Select columns dynamically based on their original names
     reordered_bookie_columns = [
         col for bookie in desired_bookie_order for col in [f"{bookie} PropLine", f"{bookie} Odds"] if col in formatted_data.columns
     ]
     final_columns = base_columns + reordered_bookie_columns
     formatted_data = formatted_data[final_columns]
 
-    # Rename columns for display
     column_rename_map = {
         "Player": "Player Name",
         "Position": "Pos",
@@ -90,9 +100,19 @@ else:
     market_names = list(available_markets.keys())
     selected_market_name = st.sidebar.selectbox("Select Prop Market", options=market_names)
     selected_table = available_markets[selected_market_name]
+
     if selected_market_name:
-        st.subheader(f"Player Prop Market Odds - {selected_market_name}")
+        last_update = get_last_update_time(selected_table)
+        st.sidebar.markdown(f"**Last Update:** {last_update}")
+
         props_data = get_props_data(selected_market_name, selected_table)
+        team_options = get_team_filter_options(props_data)
+
+        selected_team = st.sidebar.selectbox("Filter by Team", options=["All Teams"] + team_options)
+        if selected_team != "All Teams":
+            props_data = get_props_data(selected_market_name, selected_table, selected_team)
+
+        st.subheader(f"Player Prop Market Odds - {selected_market_name}")
         st.dataframe(props_data, use_container_width=True, height=680)
     else:
         st.warning("Please select a prop market from the sidebar.")
