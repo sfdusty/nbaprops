@@ -54,6 +54,19 @@ def display_table_schema_and_sample(database, table):
             # Use Pandas to display rows cleanly
             df = pd.DataFrame(rows, columns=column_names)
 
+            # Drop `PLUS_MINUS_PER_MIN` if it exists
+            if "PLUS_MINUS_PER_MIN" in df.columns:
+                df.drop(columns=["PLUS_MINUS_PER_MIN"], inplace=True)
+
+            # Rename columns to remove `_PER_MIN` suffix and adjust "FANTASY_PTS" to "FPPM" if present
+            df.rename(columns=lambda col: col.replace("_PER_MIN", "") if col.endswith("_PER_MIN") else col, inplace=True)
+            if "FANTASY_PTS" in df.columns:
+                df.rename(columns={"FANTASY_PTS": "FPPM"}, inplace=True)
+
+            # Limit decimal places to 4
+            for col in df.select_dtypes(include=["float64"]).columns:
+                df[col] = df[col].round(4)
+
             # Adjust Pandas display options
             with pd.option_context('display.max_columns', None, 'display.width', 1000):
                 print(df)
