@@ -2,9 +2,11 @@ import os
 import sqlite3
 import pandas as pd
 
+
 def list_sqlite_databases(directory):
     """List all SQLite database files in the given directory."""
     return [file for file in os.listdir(directory) if file.endswith(".db")]
+
 
 def list_tables(database):
     """List all tables in a SQLite database."""
@@ -22,6 +24,7 @@ def list_tables(database):
         return []
     finally:
         conn.close()
+
 
 def display_table_schema_and_sample(database, table):
     """Display the schema and a sample of data for a specific table."""
@@ -50,12 +53,16 @@ def display_table_schema_and_sample(database, table):
             column_names = [desc[0] for desc in cursor.description]
             # Use Pandas to display rows cleanly
             df = pd.DataFrame(rows, columns=column_names)
-            print(df)
+
+            # Adjust Pandas display options
+            with pd.option_context('display.max_columns', None, 'display.width', 1000):
+                print(df)
 
     except sqlite3.Error as e:
         print(f"SQLite error occurred while fetching data from {table}: {e}")
     finally:
         conn.close()
+
 
 def explore_databases():
     """Display all databases and their tables, then allow table exploration."""
@@ -90,6 +97,7 @@ def explore_databases():
         display_table_schema_and_sample(selected_db, selected_table)
     except (ValueError, KeyError, IndexError):
         print("Invalid selection. Returning to main menu.")
+
 
 def manage_tables():
     """Display all databases and their tables, then allow table deletion."""
@@ -141,6 +149,7 @@ def manage_tables():
     finally:
         conn.close()
 
+
 def main():
     """Main menu with prompt-based navigation."""
     while True:
@@ -159,6 +168,7 @@ def main():
             break
         else:
             print("Invalid choice. Please try again.")
+
 
 if __name__ == "__main__":
     main()
